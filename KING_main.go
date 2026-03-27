@@ -90,10 +90,6 @@ type EnvConfig struct {
 
 var Env EnvConfig
 
-// 📖 carregarEnv: Lê o arquivo .env e carrega todas as senhas da fonte, DNS,
-// formatos de canais, WebPlayers confiáveis e categorias ocultas/ordem.
-// ⚠️ TROUBLESHOOTING: Se categorias indesejadas aparecerem ou não conectar
-// na fonte, o problema geralmente é erro de digitação no .env.
 func carregarEnv() {
 	Env.FormatoCanal = ".ts"
 	Env.FiltroSemAdultos = make(map[string][]string)
@@ -360,9 +356,7 @@ func isIPAddress(s string) bool {
 	return net.ParseIP(s) != nil
 }
 
-// 📖 isAppAntigo: Detecta aplicativos problemáticos (ex: Smart STB, VLC).
-// ⚡ INJEÇÃO: Se detectar, o sistema vai injetar .ts no link da M3U
-// para evitar que o canal fique com tela preta nesses apps.
+// ⚡ DETECTOR DE APPS ANTIGOS (Injeta .ts na M3U pra evitar tela preta)
 func isAppAntigo(ua string) bool {
 	ua = strings.ToLower(ua)
 	antigos := []string{"smart stb", "smart-stb", "ss iptv", "gse", "perfect player", "lazy iptv", "kodi", "vlc"}
@@ -461,8 +455,6 @@ var (
 	authCacheTTL  = 30 * time.Second
 )
 
-// 📖 validarUsuarioCache: Retorna o usuário direto da memória se ele fez
-// login nos últimos 30 segundos, poupando processamento do Banco de Dados.
 func validarUsuarioCache(user, pass string) (int64, int, string, bool) {
 	if user == "" || pass == "" {
 		return 0, 0, "", false
@@ -512,7 +504,7 @@ type IPEntry struct {
 var (
 	ipTracker     = make(map[string][]IPEntry)
 	ipTrackerLock sync.RWMutex
-	ipTTL         = 1 * time.Hour // <-- TEMPO DE RETENÇÃO DO LIMITE DE TELAS
+	ipTTL         = 30 * time.Minute
 )
 
 func pegarIP(r *http.Request) string {
@@ -529,11 +521,6 @@ func pegarIP(r *http.Request) string {
 	return ip
 }
 
-// 📖 verificarIP: É aqui que ocorre o bloqueio de telas!
-// Se o cliente (usuário) tiver acessado com mais IPs diferentes do que o
-// seu max_connections no tempo de ipTTL, ele é bloqueado (Erro 403).
-// ⚠️ TROUBLESHOOTING: Se cliente reclamar de Limite de Telas sem motivo,
-// verifique se a tolerância (+1 invisível) não foi insuficiente para o App guloso dele.
 func verificarIP(username, ip string, maxCons int) (bool, int, int) {
 	ipTrackerLock.Lock()
 	defer ipTrackerLock.Unlock()
@@ -566,11 +553,9 @@ func verificarIP(username, ip string, maxCons int) (bool, int, int) {
 	return true, len(ativos), maxCons
 }
 
-// 📖 limparIPsExpirados: Limpa da memória RAM os IPs dos clientes
-// que não assistem nada há mais tempo que o ipTTL.
 func limparIPsExpirados() {
 	for {
-		time.Sleep(5 * time.Minute)
+		time.Sleep(30 * time.Minute)
 		ipTrackerLock.Lock()
 		agora := time.Now()
 		for user, ips := range ipTracker {
@@ -635,8 +620,6 @@ func carregarIPsRegistrados() {
 	fmt.Printf("📋 IPs já registrados carregados: %d\n", len(ipsRegistrados))
 }
 
-// 📖 carregarIPsBloqueados: Atualiza em tempo real a lista de banidos
-// lendo o arquivo ips_bloqueados.txt. Se o IP estiver lá, dá erro 403 na hora.
 func carregarIPsBloqueados() {
 	ipsBloqueadosLock.Lock()
 	defer ipsBloqueadosLock.Unlock()
@@ -761,9 +744,6 @@ func escreverResposta(w http.ResponseWriter, r *http.Request, contentType string
 // ============================================================
 // 🗄️ BANCO DE DADOS
 // ============================================================
-// 📖 iniciarBanco: Cria (se não existir) e conecta ao banco usuarios.db.
-// Usa o modo WAL (Write-Ahead Logging) para ser super rápido e suportar
-// múltiplos revendedores criando contas ao mesmo tempo no Sigma.
 func iniciarBanco() {
 	var err error
 	db, err = sql.Open("sqlite3", "./usuarios.db?_journal_mode=WAL&_busy_timeout=5000&cache=shared")
@@ -910,9 +890,6 @@ func detectarPainel(r *http.Request) string {
 	return ""
 }
 
-// 📖 sigmaHandler: Simula um Painel Oficial Sigma para softwares/robôs.
-// ⚡ TRAVA: A ação `create_line` tem uma trava anti-abuso (máximo 2 telas)
-// para revendedores de terceiros não derrubarem sua fonte criando contas abusivas.
 func sigmaHandler(w http.ResponseWriter, r *http.Request) {
 	r.ParseForm()
 	acao := r.FormValue("action")
@@ -1100,9 +1077,6 @@ case "create_line":
 	}
 }
 
-// 📖 validarUsuarioSQLite: Verifica login direto no banco de dados local.
-// ⚡ REGA SECRETA (+1): Ele adiciona 1 conexão extra no maxCons
-// para garantir que apps gulosos (que abrem 2 conexões) não bloqueiem o cliente.
 func validarUsuarioSQLite(user, pass string) (int64, int, string, bool) {
 	if user == "" || pass == "" {
 		return 0, 0, "", false
@@ -1250,11 +1224,6 @@ func detectarTipoConteudo(action string) string {
 // ============================================================
 // 🔄 ATUALIZAÇÃO DA MATRIZ
 // ============================================================
-// 📖 atualizarTudo: É o coração da sincronização (Matriz).
-// Puxa as categorias, canais, filmes e séries da Fonte Master e salva na RAM.
-// ⚠️ TROUBLESHOOTING: Se os canais sumirem ou a lista ficar vazia no app do cliente,
-// significa que a Fonte Master estava fora do ar ou engasgou bem na hora que
-// essa função rodou. Para forçar a correção na hora, reinicie o servidor GO.
 func atualizarTudo() {
 	fmt.Println("🔄 Atualizando Matriz...")
 	OcultaCatIDs     = sync.Map{}
@@ -1267,37 +1236,29 @@ func atualizarTudo() {
 	strVodC, strVodL := fetchAndFilterStreams("get_vod_streams", Env.MasterVodUser, Env.MasterVodPass, "movie")
 	strSerC, strSerL := fetchAndFilterStreams("get_series", Env.MasterVodUser, Env.MasterVodPass, "series")
 
-	// 🔒 Evitar tela vazia se a fonte cair: Se o resultado for "[]", ignorar!
-	// Adicionado para proteger sua lista atual de ser sobrescrita por erro da fonte
-	if len(strLiveC) > 10 {
-		CacheLock.Lock()
-		ApiCacheCompleto["get_live_categories"] = catLiveC
-		ApiCacheLivre["get_live_categories"] = catLiveL
-		ApiCacheCompleto["get_live_streams"] = strLiveC
-		ApiCacheLivre["get_live_streams"] = strLiveL
-		ApiCacheCompleto["get_vod_categories"] = catVodC
-		ApiCacheLivre["get_vod_categories"] = catVodL
-		ApiCacheCompleto["get_vod_streams"] = strVodC
-		ApiCacheLivre["get_vod_streams"] = strVodL
-		ApiCacheCompleto["get_series_categories"] = catSerC
-		ApiCacheLivre["get_series_categories"] = catSerL
-		ApiCacheCompleto["get_series"] = strSerC
-		ApiCacheLivre["get_series"] = strSerL
-		CacheLock.Unlock()
-	}
+	CacheLock.Lock()
+	ApiCacheCompleto["get_live_categories"] = catLiveC
+	ApiCacheLivre["get_live_categories"] = catLiveL
+	ApiCacheCompleto["get_live_streams"] = strLiveC
+	ApiCacheLivre["get_live_streams"] = strLiveL
+	ApiCacheCompleto["get_vod_categories"] = catVodC
+	ApiCacheLivre["get_vod_categories"] = catVodL
+	ApiCacheCompleto["get_vod_streams"] = strVodC
+	ApiCacheLivre["get_vod_streams"] = strVodL
+	ApiCacheCompleto["get_series_categories"] = catSerC
+	ApiCacheLivre["get_series_categories"] = catSerL
+	ApiCacheCompleto["get_series"] = strSerC
+	ApiCacheLivre["get_series"] = strSerL
+	CacheLock.Unlock()
 
 	liveC, liveL := baixarEFiltrarM3U(Env.M3ULive, "live", Env.MasterLiveUser, Env.MasterLivePass)
 	vodC, vodL := baixarEFiltrarM3U(Env.M3UVod, "movie", Env.MasterVodUser, Env.MasterVodPass)
 
-	if len(liveC) > 10 {
-		CacheLock.Lock()
-		M3UCompleto = []byte("#EXTM3U\n" + liveC + vodC)
-		M3ULivre = []byte("#EXTM3U\n" + liveL + vodL)
-		CacheLock.Unlock()
-		fmt.Println("✅ Matriz atualizada com sucesso!")
-	} else {
-		fmt.Println("⚠️ AVISO: Fonte Master não respondeu corretamente. Mantendo lista anterior no Cache!")
-	}
+	CacheLock.Lock()
+	M3UCompleto = []byte("#EXTM3U\n" + liveC + vodC)
+	M3ULivre = []byte("#EXTM3U\n" + liveL + vodL)
+	CacheLock.Unlock()
+	fmt.Println("✅ Matriz atualizada com sucesso!")
 }
 
 func marshalJSONNoEscape(v interface{}) []byte {
@@ -1308,9 +1269,6 @@ func marshalJSONNoEscape(v interface{}) []byte {
 	return bytes.TrimSpace(buf.Bytes())
 }
 
-// 📖 fetchAndFilterCategories: Conecta na Master via API, puxa as categorias,
-// filtra conteúdo adulto, renomeia e reordena com base no .env.
-// Injeta User-Agent "IPTV Smarters Pro" para não ser bloqueado.
 func fetchAndFilterCategories(action, mUser, mPass, tipoConteudo string) ([]byte, []byte) {
 	apiURL := fmt.Sprintf("http://%s/player_api.php?username=%s&password=%s&action=%s", getHostPara(mUser), mUser, mPass, action)
 	// ⚡ Repasse do User-Agent na API para não ser bloqueado pela matriz
@@ -1377,8 +1335,6 @@ func fetchAndFilterCategories(action, mUser, mPass, tipoConteudo string) ([]byte
 	return bC, bL
 }
 
-// 📖 fetchAndFilterStreams: Similar à função acima, mas processa a lista
-// gigante de canais/VODs/Séries (Streams). 
 func fetchAndFilterStreams(action, mUser, mPass, tipoConteudo string) ([]byte, []byte) {
 	apiURL := fmt.Sprintf("http://%s/player_api.php?username=%s&password=%s&action=%s", getHostPara(mUser), mUser, mPass, action)
 	// ⚡ Repasse do User-Agent na API para não ser bloqueado pela matriz
@@ -1486,8 +1442,6 @@ func formatarURLM3U(line string, pastaBase string) string {
 	return line
 }
 
-// 📖 baixarEFiltrarM3U: Idêntico à função fetchAndFilterStreams, porém lida
-// com o arquivo de texto bruto (.m3u) muito usado em SS IPTV ou aparelhos antigos.
 func baixarEFiltrarM3U(m3uURL, pastaBase, mUser, mPass string) (string, string) {
 	req, _ := http.NewRequest("GET", m3uURL, nil)
 	resp, err := httpClient.Do(req)
@@ -1546,9 +1500,6 @@ func baixarEFiltrarM3U(m3uURL, pastaBase, mUser, mPass string) (string, string) 
 // ============================================================
 // 🌐 XTREAM API HANDLER
 // ============================================================
-// 📖 xtreamAPIHandler: Onde os apps se conectam (/player_api.php).
-// Pega o Cache da memória e envia rapidinho pro app do cliente, trocando o IP
-// da Fonte pelo SEU IP/DNS. 
 func xtreamAPIHandler(w http.ResponseWriter, r *http.Request) {
 	setCORS(w)
 	if r.Method == "OPTIONS" {
@@ -1688,8 +1639,7 @@ func xtreamAPIHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// 📖 gerarListaM3U: Onde as Smart TVs baixam o arquivo .m3u (/get.php)
-// Otimizado com compressão GZIP para poupar internet do seu Servidor.
+
 func gerarListaM3U(w http.ResponseWriter, r *http.Request) {
 	setCORS(w)
 	if r.Method == "OPTIONS" {
@@ -1730,14 +1680,24 @@ func gerarListaM3U(w http.ResponseWriter, r *http.Request) {
 	}
 	CacheLock.RUnlock()
 
-	// 2. Verifica a extensão pro app (Inteligência Anti-Bloqueio)
+    // 2. Verifica output e app antigo (Estratégia Anti-Bloqueio)
+	outputParam := strings.ToLower(r.URL.Query().Get("output"))
 	ua := r.Header.Get("User-Agent")
 	extensao := ""
-	if isAppAntigo(ua) {
+
+	// ⚡ ESTRATÉGIA ANTI-BLOQUEIO
+	if outputParam == "hls" {
+		// Se pediu HLS explicitamente, mantém o .m3u8
+		extensao = ".m3u8"
+	} else if isAppAntigo(ua) {
+		// Se for SS IPTV, Smart STB, Kodi, VLC, etc., injeta o .ts para não dar tela preta
 		extensao = Env.FormatoCanal
 		fmt.Printf("📺 App Antigo detectado [%s] - Injetando %s na M3U\n", ua, extensao)
+	} else {
+		// 🛡️ O SEGREDO: Para o resto (apps modernos), fica VAZIO. Removemos o .ts!
+		extensao = ""
 	}
-
+	
 	// 3. A MÁGICA DA ACELERAÇÃO: O Replacer Mestre
 	replacer := strings.NewReplacer(
 		"{USER}", u,
@@ -1751,7 +1711,11 @@ func gerarListaM3U(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	
 	// ⚡ A MÁGICA PARA FORÇAR O DOWNLOAD NO NAVEGADOR
-	w.Header().Set("Content-Disposition", `attachment; filename="lista_king.m3u"`)
+	nomeArquivo := "lista_king.m3u"
+	if outputParam == "hls" {
+		nomeArquivo = "lista_king_hls.m3u"
+	}
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, nomeArquivo))
 
 	// 4. O TUBO DIRETO (Compressão GZIP)
 	aceitaGzip := strings.Contains(r.Header.Get("Accept-Encoding"), "gzip")
@@ -1775,10 +1739,6 @@ func gerarListaM3U(w http.ResponseWriter, r *http.Request) {
 // ============================================================
 // ▶️ PLAY HANDLER
 // ============================================================
-// 📖 playHandler: Responsável por dar o PLAY no vídeo! (/live/, /movie/)
-// Usa o clientAcelerado (com Timeout 25s) para buscar na Fonte e joga no cliente.
-// ⚠️ TROUBLESHOOTING: Se o cliente relatar tela preta ou "falha ao reproduzir",
-// veja se a sua Master está lenta. Se ela demorar mais de 25s, o GO corta a conexão (Erro 500).
 func playHandler(w http.ResponseWriter, r *http.Request) {
 	setCORS(w)
 	if r.Method == "OPTIONS" {
@@ -1913,9 +1873,6 @@ func playHandler(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, linkFinal, http.StatusFound)
 }
 
-// 📖 proxyStream: Repassa os dados de vídeo da Fonte para o Cliente.
-// ⚡ IMPORTANTE: Se o cliente avançar ou retroceder um Filme (VOD),
-// esta função usa o código HTTP 206 (Partial Content) para permitir isso sem travar!
 func proxyStream(w http.ResponseWriter, r *http.Request, targetURL string) {
 	setCORS(w)
 	reqP, _ := http.NewRequest(r.Method, targetURL, nil)
@@ -1973,8 +1930,6 @@ func proxyStream(w http.ResponseWriter, r *http.Request, targetURL string) {
 // ============================================================
 // 📊 ENDPOINT DE STATS (acessa via navegador)
 // ============================================================
-// 📖 statsHandler, painelHandler, e funções /api/...
-// Controlam todo o código visual do seu Painel Administrativo.
 func statsHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	agora := time.Now().Unix()
@@ -2077,11 +2032,12 @@ func apiUsuariosHandler(w http.ResponseWriter, r *http.Request) {
 		criado := ""
 		if created > 0 { criado = time.Unix(created, 0).Format("02/01/2006 15:04") }
 		linkM3U := fmt.Sprintf("http://%s/get.php?username=%s&password=%s&type=m3u_plus&output=mpegts", host, user, pass)
+		linkHLS := fmt.Sprintf("http://%s/get.php?username=%s&password=%s&type=m3u_plus&output=hls", host, user, pass)
 		lista = append(lista, map[string]interface{}{
 			"id": id, "username": user, "password": pass, "exp_date": expDate,
 			"validade": validade, "max_connections": maxCons, "bouquet": bouquet,
 			"painel": painel, "enabled": enabled, "status": status, "notes": notes,
-			"created_at": criado, "is_trial": isTrial, "link_m3u": linkM3U,
+			"created_at": criado, "is_trial": isTrial, "link_m3u": linkM3U, "link_hls": linkHLS,
 		})
 	}
 	if lista == nil { lista = []map[string]interface{}{} }
@@ -2377,7 +2333,7 @@ async function carregarUsuarios(){
    '<td><span class="badge bk">'+u.bouquet+'</span></td>'+
    '<td>'+u.painel+'</td><td>'+tipoTxt+'</td>'+
    '<td><span class="badge '+badge+'">'+statusTxt+'</span></td>'+
-   '<td><span class="link-btn" data-link="'+u.link_m3u+'" onclick="copiar(this.dataset.link)">M3U</span></td>'+
+   '<td><span class="link-btn" data-link="'+u.link_m3u+'" onclick="copiar(this.dataset.link)">M3U</span> <span class="link-btn" data-link="'+u.link_hls+'" onclick="copiar(this.dataset.link)" style="background:#f0ad4e;color:#000">HLS</span></td>'+
    '<td><div class="acoes">'+blockBtn+'<button class="btn btn-sm btn-red" onclick="deletarUser('+u.id+',\''+u.username+'\')">X</button></div></td></tr>';
  }).join('');}catch(e){console.error(e)}
 }
@@ -2403,9 +2359,6 @@ carregarTudo();setInterval(carregarStats,15000);
 	w.Write([]byte(html))
 }
 
-// 📖 reResolveWebPlayers: Essa função roda em background para ler os WebPlayers 
-// configurados no .env e atualizar os endereços IP deles. É útil se a Cloudflare 
-// do seu painel web mudar de IP, evitando que o painel web perca conexão.
 func reResolveWebPlayers() {
 	data, err := os.ReadFile(".env")
 	if err != nil {
@@ -2440,8 +2393,6 @@ func reResolveWebPlayers() {
 	}
 }
 
-// 📖 MAIN: O motor de partida do servidor. Aqui ele carrega tudo, configura as
-// "Goroutines" (tarefas de fundo) e liga a porta :80.
 func main() {
 	os.Setenv("TZ", "America/Sao_Paulo")
 	time.Local, _ = time.LoadLocation("America/Sao_Paulo")
@@ -2463,8 +2414,6 @@ func main() {
 		ForceAttemptHTTP2:   true,
 	}
 	httpClient = &http.Client{Transport: transporteOtimizado, Timeout: 60 * time.Second}
-	
-	// ⚡ Aqui está o Timeout Aumentado para 25 segundos!
 	clientAcelerado = &http.Client{
 		Transport: &http.Transport{
 			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
@@ -2472,7 +2421,7 @@ func main() {
 			MaxIdleConnsPerHost: 30,
 			IdleConnTimeout:     60 * time.Second,
 		},
-		Timeout:       25 * time.Second, 
+		Timeout:       25 * time.Second,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse },
 	}
 
@@ -2491,7 +2440,7 @@ func main() {
 	if len(Env.WebPlayers) > 0 {
 		fmt.Printf("   🌐 WebPlayers: %d confiáveis\n", len(Env.WebPlayers))
 	}
-	fmt.Println("   🌐 Controle de IP/Telas: 1h TTL")
+	fmt.Println("   🌐 Controle de IP/Telas: 30min TTL")
 	fmt.Println("   🛡️ Log de IPs: ips_clientes.txt | Bloqueio: ips_bloqueados.txt")
 	fmt.Println("   ⚡ Pool de conexões | GZIP | Auth Cache | SQLite WAL")
 	fmt.Printf("   🖥️  Painel Admin: http://SEU_IP/painel (login: %s)\n", Env.AdminUser)
@@ -2502,11 +2451,10 @@ func main() {
 	mostrarBancoNoTerminal()
 	mostrarEstatisticasPaineis()
 
-	// 🚦 GOROUTINES: Estas são as tarefas que rodam em "Segundo Plano" sem travar o servidor.
 	go atualizarTudo()
 	go func() {
 		for {
-			time.Sleep(24 * time.Hour) // ⚡ Atualiza VOD/Canais apenas 1 vez por dia (24h)
+			time.Sleep(24 * time.Hour)
 			atualizarTudo()
 		}
 	}()
