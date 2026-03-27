@@ -504,7 +504,7 @@ type IPEntry struct {
 var (
 	ipTracker     = make(map[string][]IPEntry)
 	ipTrackerLock sync.RWMutex
-	ipTTL         = 5 * time.Minute
+	ipTTL         = 30 * time.Minute
 )
 
 func pegarIP(r *http.Request) string {
@@ -555,7 +555,7 @@ func verificarIP(username, ip string, maxCons int) (bool, int, int) {
 
 func limparIPsExpirados() {
 	for {
-		time.Sleep(5 * time.Minute)
+		time.Sleep(30 * time.Minute)
 		ipTrackerLock.Lock()
 		agora := time.Now()
 		for user, ips := range ipTracker {
@@ -1680,19 +1680,24 @@ func gerarListaM3U(w http.ResponseWriter, r *http.Request) {
 	}
 	CacheLock.RUnlock()
 
-	// 2. Verifica output (hls = .m3u8, mpegts = .ts) e app antigo
+    // 2. Verifica output e app antigo (Estratégia Anti-Bloqueio)
 	outputParam := strings.ToLower(r.URL.Query().Get("output"))
 	ua := r.Header.Get("User-Agent")
 	extensao := ""
+
+	// ⚡ ESTRATÉGIA ANTI-BLOQUEIO
 	if outputParam == "hls" {
+		// Se pediu HLS explicitamente, mantém o .m3u8
 		extensao = ".m3u8"
-	} else if outputParam == "mpegts" || outputParam == "ts" {
-		extensao = ".ts"
 	} else if isAppAntigo(ua) {
+		// Se for SS IPTV, Smart STB, Kodi, VLC, etc., injeta o .ts para não dar tela preta
 		extensao = Env.FormatoCanal
 		fmt.Printf("📺 App Antigo detectado [%s] - Injetando %s na M3U\n", ua, extensao)
+	} else {
+		// 🛡️ O SEGREDO: Para o resto (apps modernos), fica VAZIO. Removemos o .ts!
+		extensao = ""
 	}
-
+	
 	// 3. A MÁGICA DA ACELERAÇÃO: O Replacer Mestre
 	replacer := strings.NewReplacer(
 		"{USER}", u,
@@ -2416,7 +2421,7 @@ func main() {
 			MaxIdleConnsPerHost: 30,
 			IdleConnTimeout:     60 * time.Second,
 		},
-		Timeout:       5 * time.Second,
+		Timeout:       25 * time.Second,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse },
 	}
 
@@ -2435,7 +2440,7 @@ func main() {
 	if len(Env.WebPlayers) > 0 {
 		fmt.Printf("   🌐 WebPlayers: %d confiáveis\n", len(Env.WebPlayers))
 	}
-	fmt.Println("   🌐 Controle de IP/Telas: 5min TTL")
+	fmt.Println("   🌐 Controle de IP/Telas: 30min TTL")
 	fmt.Println("   🛡️ Log de IPs: ips_clientes.txt | Bloqueio: ips_bloqueados.txt")
 	fmt.Println("   ⚡ Pool de conexões | GZIP | Auth Cache | SQLite WAL")
 	fmt.Printf("   🖥️  Painel Admin: http://SEU_IP/painel (login: %s)\n", Env.AdminUser)
@@ -2449,7 +2454,7 @@ func main() {
 	go atualizarTudo()
 	go func() {
 		for {
-			time.Sleep(6 * time.Hour)
+			time.Sleep(24 * time.Hour)
 			atualizarTudo()
 		}
 	}()
